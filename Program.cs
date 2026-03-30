@@ -1,6 +1,5 @@
 ﻿using System.Diagnostics;
 using NAudio.CoreAudioApi;
-using NAudio.CoreAudioApi.Interfaces;
 
 /*
     Mute all other apps when the selected app hits a certain threshold audio, to maximize focus.
@@ -14,8 +13,6 @@ public class Program
     {
         // Capture Processes Outputting Sound.
 
-        bool isPlaying = false;
-
         Dictionary<int, AudioSessionControl> processes = new();
 
         var deviceEnumerator = new MMDeviceEnumerator();
@@ -27,34 +24,48 @@ public class Program
         var audioSession = defaultDevice.AudioSessionManager;
         for (int i = 0; i < audioSession.Sessions.Count; i++)
         {
-            var process = Process.GetProcessById((int)audioSession.Sessions[i].GetProcessID);
-            Console.WriteLine($"{i}. {process.ProcessName}");
-            processes.Add(i, audioSession.Sessions[i]);
+            var session = audioSession.Sessions[i];
+
+            var process = Process.GetProcessById((int)session.GetProcessID);
+            
+            string name = string.IsNullOrWhiteSpace(session.DisplayName) ? 
+            process.ProcessName : session.DisplayName;
+
+            Console.WriteLine($"{i}. {name}");
+            processes.Add(i, session);
         }
 
         Console.Write("\nChoose From The List [1, 2, 3...]: ");
+        
+        var input = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(input) || !int.TryParse(input, out var selection) || !processes.ContainsKey(selection))
+        {
+            Console.WriteLine("Not a valid selection.");
+            return;
+        }
 
-        var priority = processes[Convert.ToInt32(Console.ReadLine())];
+        var priority = processes[selection];
         Console.WriteLine($"You've selected {priority.DisplayName}");
 
-        while(true) 
+        Dictionary<AudioSessionControl, float> originalVolumes = new();
+        foreach (var proc in processes.Values)
         {
-            if (priority.State.Equals(AudioSessionState.AudioSessionStateActive))
-            {
-                isPlaying = true;
-            } 
-            else
-            {
-                isPlaying = false;
-            }
+            if (proc != priority)
+                originalVolumes[proc] = proc.SimpleAudioVolume.Volume;
+        }
+
+        while (true)
+        {
+            bool isPlaying = priority.AudioMeterInformation.MasterPeakValue > 0.0001f;
 
             foreach (var proc in processes.Values)
             {
-                if (proc != priority)
-                {
-                    proc.SimpleAudioVolume.Volume = isPlaying ? 0 : 1;
-                }
+                if (proc == priority) continue;
+
+                proc.SimpleAudioVolume.Volume = isPlaying ? 0.30f : originalVolumes[proc];
             }
+
+            Thread.Sleep(100);
         }
     }
 }
